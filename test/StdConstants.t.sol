@@ -33,6 +33,11 @@ contract StdConstantsTest is Test {
         assertEq(address(this), StdConstants.VM.computeCreateAddress(StdConstants.DEFAULT_SENDER, 1));
         assertEq(StdConstants.DEFAULT_TEST_CONTRACT, StdConstants.VM.computeCreateAddress(address(this), 1));
     }
+
+    function testSystemAddress() public pure {
+        assertEq(StdConstants.SYSTEM_ADDRESS, 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE);
+        assertEq(StdConstants.SYSTEM_ADDRESS, address(uint160(uint256(type(uint160).max - 1))));
+    }
 }
 
 contract Dummy {}
