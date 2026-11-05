@@ -27,4 +27,8 @@ library StdConstants {
     /// @dev The order of the secp256k1 curve.
     uint256 internal constant SECP256K1_ORDER =
         115792089237316195423570985008687907852837564279074904382605163141518161494337;
+    /// @dev Protocol system address: caller of system calls (EIP-4788, EIP-2935, EIP-7002, EIP-7251)
+    /// and emitter of EIP-7708 ETH transfer logs.
+    /// Taken from https://eips.ethereum.org/EIPS/eip-4788.
+    address internal constant SYSTEM_ADDRESS = 0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
 }
