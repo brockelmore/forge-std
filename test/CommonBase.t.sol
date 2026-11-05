@@ -34,6 +34,10 @@ contract CommonBaseTest is Test {
         assertEq(SECP256K1_ORDER, StdConstants.SECP256K1_ORDER);
     }
 
+    function testSystemAddressValue() public pure {
+        assertEq(SYSTEM_ADDRESS, StdConstants.SYSTEM_ADDRESS);
+    }
+
     function testUint256MaxValue() public pure {
         assertEq(UINT256_MAX, type(uint256).max);
     }
