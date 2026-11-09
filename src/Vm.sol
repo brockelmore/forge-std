@@ -863,6 +863,9 @@ interface VmSafe {
     /// Loads a storage slot from an address.
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
+    /// Loads a transient storage slot from an address.
+    function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);
+
     /// Pauses gas metering (i.e. gas usage is not counted). Noop if already paused.
     function pauseGasMetering() external;
 
@@ -870,7 +873,8 @@ interface VmSafe {
     /// Subsequent calls to `record` will clear the previous data.
     function record() external;
 
-    /// Record all the transaction logs.
+    /// Record all the transaction logs. Logs emitted by calls or contract creations that revert or
+    /// halt are discarded, including reverts expected with `expectRevert`.
     function recordLogs() external;
 
     /// Reset gas metering (i.e. gas usage is set to gas limit).
@@ -895,7 +899,10 @@ interface VmSafe {
         external
         returns (bytes memory data);
 
-    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    /// Selects the test or script execution hardfork, e.g. `berlin`, `cancun`, or `tempo:T7`.
+    /// Uses the active network's version mappings and gas schedule. Does not change the network
+    /// or Solidity compiler target. On Tempo, runtime changes do not rebuild instructions or
+    /// precompiles; configure `hardfork` before execution to select a different revision.
     /// **Note:** The execution evm version is not the same as the compilation one.
     function setEvmVersion(string calldata evm) external;
 
@@ -1180,118 +1187,118 @@ interface VmSafe {
 
     // ======== JSON ========
 
-    /// Checks if `key` exists in a JSON object.
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`.
     function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue)
         external
         pure
         returns (address[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`.
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`, or returns `defaultValue` if the key does not exist.
     function parseJsonAddress(string calldata json, string calldata key, address defaultValue)
         external
         pure
         returns (address);
 
-    /// Returns the length of the JSON array at `key`.
+    /// Returns the length of the JSON array at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`.
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue)
         external
         pure
         returns (bool[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`.
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
     function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`.
     function parseJsonBytes32Array(string calldata json, string calldata key) external pure returns (bytes32[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`.
     function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue)
         external
         pure
         returns (bytes32);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`.
     function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue)
         external
         pure
         returns (bytes[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`.
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue)
         external
         pure
         returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`.
     function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue)
         external
         pure
         returns (int256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`.
     function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
     function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);
 
     /// Returns an array of all the keys in a JSON object.
     function parseJsonKeys(string calldata json, string calldata key) external pure returns (string[] memory keys);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`.
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue)
         external
         pure
         returns (string[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`.
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`, or returns `defaultValue` if the key does not exist.
     function parseJsonString(string calldata json, string calldata key, string calldata defaultValue)
         external
         pure
         returns (string memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type array corresponding to `typeDescription`.
     function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription)
         external
         pure
@@ -1300,25 +1307,25 @@ interface VmSafe {
     /// Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.
     function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type corresponding to `typeDescription`.
     function parseJsonType(string calldata json, string calldata key, string calldata typeDescription)
         external
         pure
         returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`.
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue)
         external
         pure
         returns (uint256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`.
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
     function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue)
         external
         pure
@@ -1327,7 +1334,7 @@ interface VmSafe {
     /// ABI-encodes a JSON object.
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
 
-    /// ABI-encodes a JSON object at `key`.
+    /// ABI-encodes a JSON object at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
 
     /// See `serializeJson`.
@@ -1431,7 +1438,7 @@ interface VmSafe {
     /// This cheatcode will create new keys if they didn't previously exist.
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
 
-    /// Checks if `key` exists in a JSON object
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
     function keyExists(string calldata json, string calldata key) external view returns (bool);
 
@@ -2540,7 +2547,8 @@ interface Vm is VmSafe {
     /// `target` contract from `callee`.
     /// Can be used to substitute a call to a function with another implementation that captures
     /// the primary logic of the original function but is easier to reason about.
-    /// If calldata is not a strict match then partial match by selector is attempted.
+    /// If no exact calldata match exists, a mock registered with only the 4-byte selector is
+    /// attempted.
     function mockFunction(address callee, address target, bytes calldata data) external;
 
     /// Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.
@@ -2741,6 +2749,21 @@ interface Vm is VmSafe {
 
     /// Stores a value to an address' storage slot.
     function store(address target, bytes32 slot, bytes32 value) external;
+
+    /// Stores a value to an address' transient storage slot.
+    /// The value lasts until the end of the current transaction, like a value written with `TSTORE`.
+    /// This writes the journal directly rather than executing `TSTORE`.
+    /// With isolation enabled (the default), each top-level `CALL` from a test runs as its own
+    /// transaction with empty transient storage, so a value the test stored is not visible to that
+    /// call, even though a later `loadTransient` in the test still returns it. For the target to see
+    /// the value, store it and call the target inside the same call, for example through a helper.
+    /// `STATICCALL` and `DELEGATECALL` stay in the surrounding transaction and can see its values;
+    /// `DELEGATECALL` uses the caller's transient storage, not the target's.
+    /// Example usage, where `f` is non-view and `helper.storeAndCall` stores then calls `target.f()`:
+    /// vm.storeTransient(address(target), slot, value);
+    /// target.f(); // With isolation, `f` reads 0 from `slot`.
+    /// helper.storeAndCall(address(target), slot, value); // `f` reads `value`.
+    function storeTransient(address target, bytes32 slot, bytes32 value) external;
 
     /// Fetches the given transaction from the active fork and executes it on the current state.
     function transact(bytes32 txHash) external;
