@@ -21,6 +21,16 @@ interface VmSafe {
         RecurrentPrank
     }
 
+    /// The opcode used for an expected call.
+    enum CallKind {
+        // CALL.
+        Call,
+        // DELEGATECALL.
+        DelegateCall,
+        // STATICCALL.
+        StaticCall
+    }
+
     /// The kind of account access that occurred.
     enum AccountAccessKind {
         // The account was called.
@@ -2811,6 +2821,10 @@ interface Vm is VmSafe {
 
     /// Expects given number of calls to an address with the specified `msg.value`, gas, and calldata.
     function expectCall(address callee, uint256 msgValue, uint64 gas, bytes calldata data, uint64 count) external;
+
+    /// Expects a call of the specified kind to an address with the specified calldata.
+    /// Calldata can either be a strict or a partial match.
+    function expectCall(CallKind kind, address callee, bytes calldata data) external;
 
     /// Expects the deployment of the specified bytecode by the specified address using the CREATE opcode
     function expectCreate(bytes calldata bytecode, address deployer) external;
