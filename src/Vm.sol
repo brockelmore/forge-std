@@ -79,6 +79,17 @@ interface VmSafe {
         Create2
     }
 
+    /// The key type of a configurable account owner.
+    enum OwnerKeyType {
+        // A secp256k1 key, signing with a 65-byte ECDSA signature.
+        Secp256k1,
+        // A P-256 key, signing the digest directly (`0x01` signature).
+        P256,
+        // A P-256 passkey, signing a WebAuthn assertion (`0x02` signature) with the RP ID
+        // `localhost` and the origin `http://localhost`.
+        WebAuthn
+    }
+
     /// An Ethereum log. Returned by `getRecordedLogs`.
     struct Log {
         // The topics of the log, including the signature, if any.
@@ -381,7 +392,43 @@ interface VmSafe {
         bytes32[] storageKeys;
     }
 
+    /// An owner of a Tempo configurable account (TIP-1107).
+    struct ConfigurableAccountOwner {
+        // The owner address: a secp256k1 address, or `keccak256(x || y)[12:]` of a P-256 key.
+        address owner;
+        // The nonzero weight of the owner's approval.
+        uint8 weight;
+    }
+
+    /// The configuration of a Tempo configurable account (TIP-1107).
+    struct ConfigurableAccountConfig {
+        // The salt that, with the initial owners and threshold, determines the account address.
+        bytes32 salt;
+        // The configuration version: zero for the initial configuration, incremented by each update.
+        uint64 version;
+        // The total owner weight that approvals must reach.
+        uint8 threshold;
+        // The owners, sorted by ascending address.
+        ConfigurableAccountOwner[] owners;
+    }
+
+    /// A private key of a configurable account owner.
+    struct OwnerKey {
+        // The key type.
+        OwnerKeyType keyType;
+        // The private key, on secp256k1 or P-256 depending on `keyType`.
+        uint256 privateKey;
+    }
+
     // ======== Crypto ========
+
+    /// Returns the digest that the owners of the configurable account `account` approve for
+    /// `digest`, such as a transaction signature hash, under configuration version `configVersion`:
+    /// `keccak256("tempo:configurable-account:signature" || digest || account || uint64(configVersion))`.
+    function configurableAccountDigest(address account, uint64 configVersion, bytes32 digest)
+        external
+        pure
+        returns (bytes32 ownerDigest);
 
     /// Generates an Ed25519 key pair from a deterministic salt.
     /// Returns (publicKey, privateKey) as 32-byte values.
@@ -395,6 +442,14 @@ interface VmSafe {
 
     /// Generates a wallet from the private key, labels the account with that name, and returns the wallet.
     function createWallet(uint256 privateKey, string calldata walletLabel) external returns (Wallet memory wallet);
+
+    /// Derives the address of the Tempo configurable account with the initial configuration `config`
+    /// (TIP-1107), as `IConfigurableAccount.deriveAccount` does, without the chain's reserved
+    /// address checks. `config.version` is ignored.
+    function deriveConfigurableAccount(ConfigurableAccountConfig calldata config)
+        external
+        pure
+        returns (address account);
 
     /// Derive a private key from a provided mnemonic string (or mnemonic file path)
     /// at the derivation path `m/44'/60'/0'/0/{index}`.
@@ -473,6 +528,17 @@ interface VmSafe {
         pure
         returns (uint256 resultX, uint256 resultY);
 
+    /// Encodes a `0x05` configurable account signature for `account` from its current configuration
+    /// `config` and encoded owner approvals of its owner digest (65-byte secp256k1, `0x01` P-256 or
+    /// `0x02` WebAuthn signatures).
+    /// Approvals are encoded in the given order. Only the shape is checked, so this can build
+    /// signatures that the node rejects, such as unsorted or excess approvals.
+    function encodeConfigurableAccountSignature(
+        address account,
+        ConfigurableAccountConfig calldata config,
+        bytes[] calldata ownerSignatures
+    ) external pure returns (bytes memory signature);
+
     /// Derives the Ed25519 public key from a private key.
     function publicKeyEd25519(bytes32 privateKey) external pure returns (bytes32 publicKey);
 
@@ -526,6 +592,34 @@ interface VmSafe {
     /// Raises error if none of the signers passed into the script have provided address.
     function signCompact(address signer, bytes32 digest) external pure returns (bytes32 r, bytes32 vs);
 
+    /// Signs `digest` as the configurable account `account` with its current configuration `config`,
+    /// using secp256k1 owner keys.
+    /// Signs with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted
+    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid,
+    /// has version 0 but does not derive `account`, a key is not an owner, or no such quorum exists
+    /// among the keys. Returns the `0x05` signature accepted by
+    /// `SignatureVerifier.verifyConfigurableAccount`.
+    function signConfigurableAccount(
+        uint256[] calldata privateKeys,
+        address account,
+        ConfigurableAccountConfig calldata config,
+        bytes32 digest
+    ) external pure returns (bytes memory signature);
+
+    /// Signs `digest` as the configurable account `account` with its current configuration `config`,
+    /// using secp256k1, P-256 or WebAuthn owner keys.
+    /// Signs with the fewest keys that form a quorum the node accepts: at most 8 approvals, sorted
+    /// by owner address, the last of which reaches the threshold. Reverts if `config` is invalid,
+    /// has version 0 but does not derive `account`, a key is not an owner, or no such quorum exists
+    /// among the keys. Returns the `0x05` signature accepted by
+    /// `SignatureVerifier.verifyConfigurableAccount`.
+    function signConfigurableAccount(
+        OwnerKey[] calldata ownerKeys,
+        address account,
+        ConfigurableAccountConfig calldata config,
+        bytes32 digest
+    ) external pure returns (bytes memory signature);
+
     /// Signs a message with namespace using Ed25519.
     /// The signature covers namespace || message for domain separation.
     /// Returns a 64-byte Ed25519 signature.
@@ -541,14 +635,18 @@ interface VmSafe {
         pure
         returns (bytes memory signature);
 
-    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.
-    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.
-    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
-    /// and account address.
-    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest)
-        external
-        pure
-        returns (bytes memory signature);
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` whose access key is the
+    /// configurable account `configurableAccount` with its current configuration `config` (TIP-1111).
+    /// The owners approve the keychain V2 hash `keccak256(0x04 || digest || account)`, with
+    /// approvals chosen as in `signConfigurableAccount`. Returns the signature accepted by
+    /// `SignatureVerifier.verifyKeychain`.
+    function signKeychainConfigurableAccount(
+        OwnerKey[] calldata ownerKeys,
+        address configurableAccount,
+        ConfigurableAccountConfig calldata config,
+        address account,
+        bytes32 digest
+    ) external pure returns (bytes memory signature);
 
     /// Signs `digest` with `privateKey` using the secp256r1 curve.
     function signP256(uint256 privateKey, bytes32 digest) external pure returns (bytes32 r, bytes32 s);
@@ -585,6 +683,15 @@ interface VmSafe {
         bytes calldata message,
         bytes32 publicKey
     ) external pure returns (bool valid);
+
+    /// Signs `digest` as a Tempo V2 keychain signature for `account` using a root or admin secp256k1 key.
+    /// Returns the encoded signature bytes accepted by `SignatureVerifier.verifyKeychainAdmin`.
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address. Returns the same bytes as `signKeychain`.
+    function signKeychainAdmin(uint256 privateKey, address account, bytes32 digest)
+        external
+        pure
+        returns (bytes memory signature);
 
     // ======== Environment ========
 
@@ -863,6 +970,9 @@ interface VmSafe {
     /// Loads a storage slot from an address.
     function load(address target, bytes32 slot) external view returns (bytes32 data);
 
+    /// Loads a transient storage slot from an address.
+    function loadTransient(address target, bytes32 slot) external view returns (bytes32 data);
+
     /// Pauses gas metering (i.e. gas usage is not counted). Noop if already paused.
     function pauseGasMetering() external;
 
@@ -870,7 +980,8 @@ interface VmSafe {
     /// Subsequent calls to `record` will clear the previous data.
     function record() external;
 
-    /// Record all the transaction logs.
+    /// Record all the transaction logs. Logs emitted by calls or contract creations that revert or
+    /// halt are discarded, including reverts expected with `expectRevert`.
     function recordLogs() external;
 
     /// Reset gas metering (i.e. gas usage is set to gas limit).
@@ -895,7 +1006,10 @@ interface VmSafe {
         external
         returns (bytes memory data);
 
-    /// Set the exact test or script execution evm version, e.g. `berlin`, `cancun`.
+    /// Selects the test or script execution hardfork, e.g. `berlin`, `cancun`, or `tempo:T7`.
+    /// Uses the active network's version mappings and gas schedule. Does not change the network
+    /// or Solidity compiler target. On Tempo, runtime changes do not rebuild instructions or
+    /// precompiles; configure `hardfork` before execution to select a different revision.
     /// **Note:** The execution evm version is not the same as the compilation one.
     function setEvmVersion(string calldata evm) external;
 
@@ -1180,118 +1294,118 @@ interface VmSafe {
 
     // ======== JSON ========
 
-    /// Checks if `key` exists in a JSON object.
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     function keyExistsJson(string calldata json, string calldata key) external view returns (bool);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`.
     function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue)
         external
         pure
         returns (address[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`.
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
 
-    /// Parses a string of JSON data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `address`, or returns `defaultValue` if the key does not exist.
     function parseJsonAddress(string calldata json, string calldata key, address defaultValue)
         external
         pure
         returns (address);
 
-    /// Returns the length of the JSON array at `key`.
+    /// Returns the length of the JSON array at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`.
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue)
         external
         pure
         returns (bool[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`.
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
     function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`.
     function parseJsonBytes32Array(string calldata json, string calldata key) external pure returns (bytes32[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`.
     function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue)
         external
         pure
         returns (bytes32);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`.
     function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue)
         external
         pure
         returns (bytes[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`.
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
     function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue)
         external
         pure
         returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`.
     function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue)
         external
         pure
         returns (int256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`.
     function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);
 
-    /// Parses a string of JSON data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
     function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);
 
     /// Returns an array of all the keys in a JSON object.
     function parseJsonKeys(string calldata json, string calldata key) external pure returns (string[] memory keys);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`.
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue)
         external
         pure
         returns (string[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`.
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `string`, or returns `defaultValue` if the key does not exist.
     function parseJsonString(string calldata json, string calldata key, string calldata defaultValue)
         external
         pure
         returns (string memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to type array corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type array corresponding to `typeDescription`.
     function parseJsonTypeArray(string calldata json, string calldata key, string calldata typeDescription)
         external
         pure
@@ -1300,25 +1414,25 @@ interface VmSafe {
     /// Parses a string of JSON data and coerces it to type corresponding to `typeDescription`.
     function parseJsonType(string calldata json, string calldata typeDescription) external pure returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to type corresponding to `typeDescription`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to type corresponding to `typeDescription`.
     function parseJsonType(string calldata json, string calldata key, string calldata typeDescription)
         external
         pure
         returns (bytes memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`.
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
     function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue)
         external
         pure
         returns (uint256[] memory);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`.
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
 
-    /// Parses a string of JSON data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    /// Parses a string of JSON data at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
     function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue)
         external
         pure
@@ -1327,7 +1441,7 @@ interface VmSafe {
     /// ABI-encodes a JSON object.
     function parseJson(string calldata json) external pure returns (bytes memory abiEncodedData);
 
-    /// ABI-encodes a JSON object at `key`.
+    /// ABI-encodes a JSON object at `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields).
     function parseJson(string calldata json, string calldata key) external pure returns (bytes memory abiEncodedData);
 
     /// See `serializeJson`.
@@ -1431,7 +1545,7 @@ interface VmSafe {
     /// This cheatcode will create new keys if they didn't previously exist.
     function writeJson(string calldata json, string calldata path, string calldata valueKey) external;
 
-    /// Checks if `key` exists in a JSON object
+    /// Checks if `key` (a JSONPath selector; use `.foo`, not `foo`, for object fields) exists in a JSON object.
     /// `keyExists` is being deprecated in favor of `keyExistsJson`. It will be removed in future versions.
     function keyExists(string calldata json, string calldata key) external view returns (bool);
 
@@ -2540,7 +2654,8 @@ interface Vm is VmSafe {
     /// `target` contract from `callee`.
     /// Can be used to substitute a call to a function with another implementation that captures
     /// the primary logic of the original function but is easier to reason about.
-    /// If calldata is not a strict match then partial match by selector is attempted.
+    /// If no exact calldata match exists, a mock registered with only the 4-byte selector is
+    /// attempted.
     function mockFunction(address callee, address target, bytes calldata data) external;
 
     /// Utility cheatcode to remove any EIP-2930 access list set by `accessList` cheatcode.
@@ -2742,6 +2857,21 @@ interface Vm is VmSafe {
     /// Stores a value to an address' storage slot.
     function store(address target, bytes32 slot, bytes32 value) external;
 
+    /// Stores a value to an address' transient storage slot.
+    /// The value lasts until the end of the current transaction, like a value written with `TSTORE`.
+    /// This writes the journal directly rather than executing `TSTORE`.
+    /// With isolation enabled (the default), each top-level `CALL` from a test runs as its own
+    /// transaction with empty transient storage, so a value the test stored is not visible to that
+    /// call, even though a later `loadTransient` in the test still returns it. For the target to see
+    /// the value, store it and call the target inside the same call, for example through a helper.
+    /// `STATICCALL` and `DELEGATECALL` stay in the surrounding transaction and can see its values;
+    /// `DELEGATECALL` uses the caller's transient storage, not the target's.
+    /// Example usage, where `f` is non-view and `helper.storeAndCall` stores then calls `target.f()`:
+    /// vm.storeTransient(address(target), slot, value);
+    /// target.f(); // With isolation, `f` reads 0 from `slot`.
+    /// helper.storeAndCall(address(target), slot, value); // `f` reads `value`.
+    function storeTransient(address target, bytes32 slot, bytes32 value) external;
+
     /// Fetches the given transaction from the active fork and executes it on the current state.
     function transact(bytes32 txHash) external;
 
@@ -2887,11 +3017,6 @@ interface Vm is VmSafe {
     /// Expect a given number of logs from a specific emitter with all topic and data checks enabled.
     function expectEmit(address emitter, uint64 count) external;
 
-    /// Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.
-    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
-    /// and account address.
-    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
-
     /// Expects a call to `SignatureVerifier.verifyKeychain(account, digest, signature)`.
     function expectKeychainVerified(address account, bytes32 digest, bytes calldata signature) external;
 
@@ -2976,6 +3101,11 @@ interface Vm is VmSafe {
 
     /// Stops all safe memory expectation in the current subcontext.
     function stopExpectSafeMemory() external;
+
+    /// Expects a call to `SignatureVerifier.verifyKeychainAdmin(account, digest, signature)`.
+    /// The supplied `digest` should already be domain-separated with chain ID, contract address,
+    /// and account address.
+    function expectKeychainAdminVerified(address account, bytes32 digest, bytes calldata signature) external;
 
     // ======== Utilities ========
 
